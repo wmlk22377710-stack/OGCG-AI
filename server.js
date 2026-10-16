@@ -10,7 +10,7 @@ const FRONTEND_ORIGIN =
   "https://wmlk22377710-stack.github.io";
 
 const OPENAI_URL = "https://api.openai.com/v1/responses";
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-3.8-flash";
 const GEMINI_URL =
   `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
