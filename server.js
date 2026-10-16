@@ -1,7 +1,10 @@
 
-const http = require("http");
+"use strict";
 
-const PORT = process.env.PORT || 3000;
+const express = require("express");
+
+const app = express();
+const PORT = process.env.PORT || 10000;
 const FRONTEND_ORIGIN =
   process.env.FRONTEND_ORIGIN ||
   "https://wmlk22377710-stack.github.io";
@@ -11,37 +14,71 @@ const GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_URL =
   `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-function send(res, status, data) {
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, x-openai-api-key, x-gemini-api-key",
-    "Vary": "Origin"
-  });
-  res.end(JSON.stringify(data));
-}
+app.disable("x-powered-by");
+app.use(express.json({ limit: "32kb" }));
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", chunk => {
-      body += chunk;
-      if (body.length > 1_000_000) {
-        reject(new Error("Request body too large"));
-        req.destroy();
-      }
+// CORS: allow the deployed frontend and required provider-key headers.
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (origin && origin !== FRONTEND_ORIGIN) {
+    return res.status(403).json({
+      ok: false,
+      error: "This website is not allowed to access the backend."
     });
-    req.on("end", () => {
-      try {
-        resolve(JSON.parse(body || "{}"));
-      } catch {
-        reject(new Error("Invalid JSON request"));
-      }
-    });
-    req.on("error", reject);
+  }
+
+  if (origin === FRONTEND_ORIGIN) {
+    res.setHeader("Access-Control-Allow-Origin", FRONTEND_ORIGIN);
+    res.setHeader("Vary", "Origin");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, x-openai-api-key, x-gemini-api-key"
+    );
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, OPTIONS"
+    );
+  }
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+app.get("/", (req, res) => {
+  res.json({
+    ok: true,
+    service: "OGCG AI Router backend",
+    providers: ["openai", "gemini"]
   });
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    service: "OGCG AI Router backend"
+  });
+});
+
+function getProviderError(status, data, provider) {
+  const detail = data?.error?.message;
+
+  if (status === 401) {
+    return `${provider} rejected the API key. Check that it is valid.`;
+  }
+
+  if (status === 403) {
+    return `${provider} denied access. Check the key, permissions, and API access.`;
+  }
+
+  if (status === 429) {
+    return `${provider} rate limit or usage quota reached. Check your API account and usage limits.`;
+  }
+
+  return detail || `${provider} request failed (HTTP ${status}).`;
 }
 
 async function callOpenAI(apiKey, task) {
@@ -54,17 +91,18 @@ async function callOpenAI(apiKey, task) {
     body: JSON.stringify({
       model: "gpt-4.1-mini",
       input: task
-    })
+    }),
+    signal: AbortSignal.timeout(60000)
   });
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const err = new Error(
-      data.error?.message || "OpenAI request failed"
+    const error = new Error(
+      getProviderError(response.status, data, "OpenAI")
     );
-    err.status = response.status;
-    throw err;
+    error.status = response.status;
+    throw error;
   }
 
   const text = (data.output || [])
@@ -73,7 +111,11 @@ async function callOpenAI(apiKey, task) {
     .map(item => item.text)
     .join("\n");
 
-  return text || "OpenAI returned an empty response.";
+  if (!text.trim()) {
+    throw new Error("OpenAI returned no text.");
+  }
+
+  return text;
 }
 
 async function callGemini(apiKey, task) {
@@ -88,17 +130,18 @@ async function callGemini(apiKey, task) {
         role: "user",
         parts: [{ text: task }]
       }]
-    })
+    }),
+    signal: AbortSignal.timeout(60000)
   });
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const err = new Error(
-      data.error?.message || "Gemini request failed"
+    const error = new Error(
+      getProviderError(response.status, data, "Gemini")
     );
-    err.status = response.status;
-    throw err;
+    error.status = response.status;
+    throw error;
   }
 
   const text = (data.candidates || [])
@@ -106,110 +149,88 @@ async function callGemini(apiKey, task) {
     .map(part => part.text || "")
     .join("");
 
-  return text || "Gemini returned no text. Check the prompt or model availability.";
+  if (!text.trim()) {
+    const reason = data.promptFeedback?.blockReason;
+    throw new Error(
+      reason
+        ? `Gemini could not answer this prompt. Block reason: ${reason}.`
+        : "Gemini returned no text. Check model availability and the prompt."
+    );
+  }
+
+  return text;
 }
 
-const server = http.createServer(async (req, res) => {
-  const origin = req.headers.origin;
+app.post("/api/chat", async (req, res) => {
+  const task = req.body?.task;
+  const provider = String(req.body?.provider || "openai").toLowerCase();
 
-  if (origin && origin !== FRONTEND_ORIGIN) {
-    return send(res, 403, {
+  if (typeof task !== "string" || !task.trim()) {
+    return res.status(400).json({
       ok: false,
-      error: "Origin not allowed."
+      error: "Enter a coding task before sending."
     });
   }
 
-  if (req.method === "OPTIONS") {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
-      "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-      "Access-Control-Allow-Headers":
-        "Content-Type, x-openai-api-key, x-gemini-api-key",
-      "Vary": "Origin"
-    });
-    return res.end();
-  }
-
-  if (req.method === "GET" && req.url === "/") {
-    return send(res, 200, {
-      ok: true,
-      service: "OGCG AI Router backend",
-      providers: ["openai", "gemini"]
-    });
-  }
-
-  if (req.method !== "POST" || req.url !== "/api/chat") {
-    return send(res, 404, {
+  if (task.length > 12000) {
+    return res.status(413).json({
       ok: false,
-      error: "Endpoint not found."
+      error: "The task is too long. Please shorten it."
+    });
+  }
+
+  let apiKey;
+  let callProvider;
+
+  if (provider === "openai") {
+    apiKey = req.get("x-openai-api-key");
+    callProvider = callOpenAI;
+  } else if (provider === "gemini") {
+    apiKey = req.get("x-gemini-api-key");
+    callProvider = callGemini;
+  } else {
+    return res.status(400).json({
+      ok: false,
+      error: "Provider not integrated yet. Choose OpenAI or Gemini."
+    });
+  }
+
+  if (!apiKey || !apiKey.trim()) {
+    return res.status(400).json({
+      ok: false,
+      error: `Enter your ${provider === "gemini" ? "Gemini" : "OpenAI"} API key in provider settings.`
     });
   }
 
   try {
-    const body = await readBody(req);
-    const task = typeof body.task === "string"
-      ? body.task.trim()
-      : "";
-    const provider = String(body.provider || "openai").toLowerCase();
+    const text = await callProvider(apiKey.trim(), task.trim());
 
-    if (!task) {
-      return send(res, 400, {
-        ok: false,
-        error: "Enter a task or prompt first."
-      });
-    }
-
-    let text;
-
-    if (provider === "openai") {
-      const key = req.headers["x-openai-api-key"];
-      if (!key) {
-        return send(res, 400, {
-          ok: false,
-          error: "Enter your OpenAI API key in Settings."
-        });
-      }
-      text = await callOpenAI(key, task);
-    } else if (provider === "gemini") {
-      const key = req.headers["x-gemini-api-key"];
-      if (!key) {
-        return send(res, 400, {
-          ok: false,
-          error: "Enter your Gemini API key in Settings."
-        });
-      }
-      text = await callGemini(key, task);
-    } else {
-      return send(res, 400, {
-        ok: false,
-        error: "Provider not integrated yet. Choose OpenAI or Gemini."
-      });
-    }
-
-    return send(res, 200, {
+    return res.json({
       ok: true,
       provider,
       text
     });
   } catch (error) {
-    const status = error.status || 500;
-    let message = error.message || "Unexpected backend error.";
-
-    if (status === 429) {
-      message =
-        "Rate limit or API quota reached. Check this provider's usage and billing.";
-    } else if (status === 401 || status === 403) {
-      message =
-        "Authentication or permission failed. Check the API key and provider access.";
+    if (
+      error.name === "TimeoutError" ||
+      error.name === "AbortError"
+    ) {
+      return res.status(504).json({
+        ok: false,
+        error: `${provider} request timed out. Please try again.`
+      });
     }
 
-    return send(res, status >= 400 && status < 600 ? status : 500, {
+    // Never log API keys, request headers, or prompt contents.
+    const status = error.status || 502;
+
+    return res.status(status >= 400 && status < 600 ? status : 502).json({
       ok: false,
-      error: message
+      error: error.message || `Could not reach ${provider}.`
     });
   }
 });
 
-server.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`OGCG AI Router backend listening on port ${PORT}`);
 });
