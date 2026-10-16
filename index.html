@@ -1,0 +1,151 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b1420">
+  <title>OGCG AI — Multi AI Router</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="OGCG AI home">
+      <span class="brand-mark">O</span>
+      <span>OGCG <span class="muted">AI</span></span>
+    </a>
+    <span class="status"><span class="status-dot"></span> Workspace ready</span>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <button class="new-chat" id="newChat">＋ New coding task</button>
+      <h2>Workspace</h2>
+      <button class="nav-item active">⌘ Multi-AI Chat</button>
+      <button class="nav-item" id="settingsNav">⚙ Provider settings</button>
+
+      <div class="sidebar-note">
+        <strong>OGCG AI Router</strong>
+        <p>Choose one AI or combine multiple providers for the same task.</p>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <section id="chatScreen">
+        <div class="welcome">
+          <div class="eyebrow">YOUR CODING WORKSPACE</div>
+          <h1>Build with more than one AI.</h1>
+          <p>Select your providers, describe your coding task, and compare their answers.</p>
+        </div>
+
+        <div class="section-heading">
+          <div>
+            <h2>AI providers</h2>
+            <p>Select any combination of providers.</p>
+          </div>
+          <button class="text-button" id="selectAll">Select all</button>
+        </div>
+
+        <div class="provider-grid" id="providerGrid">
+          <label class="provider-card">
+            <input type="checkbox" name="provider" value="openai">
+            <span class="provider-icon openai-icon">O</span>
+            <span class="provider-info">
+              <strong>OpenAI</strong>
+              <small>GPT models</small>
+              <small class="provider-status" data-status="openai">Not connected</small>
+            </span>
+            <span class="checkmark">✓</span>
+            <button type="button" class="connect-link" data-connect="openai">Configure</button>
+          </label>
+
+          <label class="provider-card">
+            <input type="checkbox" name="provider" value="gemini">
+            <span class="provider-icon gemini-icon">✦</span>
+            <span class="provider-info">
+              <strong>Gemini</strong>
+              <small>Google AI models</small>
+              <small class="provider-status" data-status="gemini">Not connected</small>
+            </span>
+            <span class="checkmark">✓</span>
+            <button type="button" class="connect-link" data-connect="gemini">Configure</button>
+          </label>
+
+          <label class="provider-card">
+            <input type="checkbox" name="provider" value="claude">
+            <span class="provider-icon claude-icon">C</span>
+            <span class="provider-info">
+              <strong>Claude</strong>
+              <small>Anthropic models</small>
+              <small class="provider-status" data-status="claude">Not connected</small>
+            </span>
+            <span class="checkmark">✓</span>
+            <button type="button" class="connect-link" data-connect="claude">Configure</button>
+          </label>
+
+          <label class="provider-card">
+            <input type="checkbox" name="provider" value="grok">
+            <span class="provider-icon grok-icon">X</span>
+            <span class="provider-info">
+              <strong>Grok</strong>
+              <small>xAI models</small>
+              <small class="provider-status" data-status="grok">Not connected</small>
+            </span>
+            <span class="checkmark">✓</span>
+            <button type="button" class="connect-link" data-connect="grok">Configure</button>
+          </label>
+        </div>
+
+        <div class="selection-bar">
+          <span id="selectionCount">0 providers selected</span>
+          <span class="muted">Multi-AI mode</span>
+        </div>
+
+        <div class="composer">
+          <label for="taskInput">Your coding task</label>
+          <textarea id="taskInput" rows="5"
+            placeholder="Example: Build a simple browser game with a player, opponents, and a scoring system..."></textarea>
+          <div class="composer-bottom">
+            <span class="muted">Live AI responses will be enabled after provider setup.</span>
+            <button class="primary-button" id="runTask">Run task ↗</button>
+          </div>
+          <p id="message" class="message" role="status"></p>
+        </div>
+
+        <section id="results" class="results" hidden>
+          <h2>Task preview</h2>
+          <div id="resultContent"></div>
+        </section>
+      </section>
+
+      <section id="settingsScreen" hidden>
+        <button class="text-button" id="backToChat">← Back to chat</button>
+        <div class="welcome">
+          <div class="eyebrow">CONNECTION SETTINGS</div>
+          <h1>Provider settings</h1>
+          <p>Configure providers here. Real verification will be added with the secure backend.</p>
+        </div>
+        <div class="settings-panel">
+          <label for="providerChoice">Provider</label>
+          <select id="providerChoice">
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="claude">Anthropic Claude</option>
+            <option value="grok">xAI Grok</option>
+          </select>
+          <p id="providerHelp" class="muted">Start with OpenAI. API keys must be handled securely by the backend.</p>
+          <div class="security-note">
+            <strong>Security first</strong>
+            <p>This initial version does not request or store API keys. Do not paste a secret key into this page or commit one to GitHub.</p>
+          </div>
+          <button class="primary-button" id="connectionInfo">Connection setup status</button>
+          <p id="settingsMessage" class="message" role="status"></p>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+        </html>
+        
