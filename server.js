@@ -137,13 +137,14 @@ async function callGemini(apiKey, task) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const error = new Error(
-      getProviderError(response.status, data, "Gemini")
-    );
-    error.status = response.status;
-    throw error;
-  }
+  const error = new Error(
+    getProviderError(response.status, data, "Gemini")
+  );
 
+  error.status = response.status;
+  error.providerStatus = response.status;
+  throw error;
+  }
   const text = (data.candidates || [])
     .flatMap(candidate => candidate.content?.parts || [])
     .map(part => part.text || "")
