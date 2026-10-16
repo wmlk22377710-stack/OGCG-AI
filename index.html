@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -21,7 +20,7 @@
     <aside class="sidebar">
       <button class="new-chat" id="newChat">＋ New coding task</button>
       <h2>Workspace</h2>
-      <button class="nav-item active">⌘ Multi-AI Chat</button>
+      <button class="nav-item active" id="chatNav">⌘ Multi-AI Chat</button>
       <button class="nav-item" id="settingsNav">⚙ Provider settings</button>
 
       <div class="sidebar-note">
@@ -106,14 +105,14 @@
           <textarea id="taskInput" rows="5"
             placeholder="Example: Build a simple browser game with a player, opponents, and a scoring system..."></textarea>
           <div class="composer-bottom">
-            <span class="muted">Live AI responses will be enabled after provider setup.</span>
+            <span class="muted">Connect a provider to enable real AI responses.</span>
             <button class="primary-button" id="runTask">Run task ↗</button>
           </div>
           <p id="message" class="message" role="status"></p>
         </div>
 
         <section id="results" class="results" hidden>
-          <h2>Task preview</h2>
+          <h2>AI responses</h2>
           <div id="resultContent"></div>
         </section>
       </section>
@@ -123,8 +122,9 @@
         <div class="welcome">
           <div class="eyebrow">CONNECTION SETTINGS</div>
           <h1>Provider settings</h1>
-          <p>Configure providers here. Real verification will be added with the secure backend.</p>
+          <p>Connect your own provider account to use real AI responses.</p>
         </div>
+
         <div class="settings-panel">
           <label for="providerChoice">Provider</label>
           <select id="providerChoice">
@@ -133,12 +133,42 @@
             <option value="claude">Anthropic Claude</option>
             <option value="grok">xAI Grok</option>
           </select>
-          <p id="providerHelp" class="muted">Start with OpenAI. API keys must be handled securely by the backend.</p>
+
+          <p id="providerHelp" class="muted">
+            Start with OpenAI. The other providers will be integrated separately.
+          </p>
+
+          <label for="apiKeyInput">API key</label>
+          <input
+            type="password"
+            id="apiKeyInput"
+            placeholder="Paste your provider API key"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+          >
+
+          <p class="muted">
+            Your key is intended to remain in page memory and be sent to
+            your backend over HTTPS. Refreshing the page will clear it.
+          </p>
+
           <div class="security-note">
             <strong>Security first</strong>
-            <p>This initial version does not request or store API keys. Do not paste a secret key into this page or commit one to GitHub.</p>
+            <p>
+              Never commit API keys to GitHub or share them in chat.
+              Only enter a key on a website you trust. API usage may incur charges.
+            </p>
           </div>
-          <button class="primary-button" id="connectionInfo">Connection setup status</button>
+
+          <button class="primary-button" id="connectProvider">
+            Connect &amp; Verify
+          </button>
+
+          <p id="connectionInfo" class="muted">
+            Backend: https://ogcg-ai-1.onrender.com
+          </p>
+
           <p id="settingsMessage" class="message" role="status"></p>
         </div>
       </section>
@@ -147,5 +177,5 @@
 
   <script src="app.js"></script>
 </body>
-        </html>
-        
+</html>
+
