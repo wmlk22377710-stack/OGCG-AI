@@ -1,144 +1,215 @@
 
-"use strict";
+const http = require("http");
 
-const express = require("express");
+const PORT = process.env.PORT || 3000;
+const FRONTEND_ORIGIN =
+  process.env.FRONTEND_ORIGIN ||
+  "https://wmlk22377710-stack.github.io";
 
-const app = express();
-const PORT = process.env.PORT || 10000;
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN;
+const OPENAI_URL = "https://api.openai.com/v1/responses";
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_URL =
+  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-app.disable("x-powered-by");
-app.use(express.json({ limit: "32kb" }));
+function send(res, status, data) {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers":
+      "Content-Type, x-openai-api-key, x-gemini-api-key",
+    "Vary": "Origin"
+  });
+  res.end(JSON.stringify(data));
+}
 
-// Allow requests only from your configured frontend origin.
-// Set FRONTEND_ORIGIN in your backend hosting settings.
-app.use((req, res, next) => {
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk;
+      if (body.length > 1_000_000) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(body || "{}"));
+      } catch {
+        reject(new Error("Invalid JSON request"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+async function callOpenAI(apiKey, task) {
+  const response = await fetch(OPENAI_URL, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "gpt-4.1-mini",
+      input: task
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    const err = new Error(
+      data.error?.message || "OpenAI request failed"
+    );
+    err.status = response.status;
+    throw err;
+  }
+
+  const text = (data.output || [])
+    .flatMap(item => item.content || [])
+    .filter(item => item.type === "output_text")
+    .map(item => item.text)
+    .join("\n");
+
+  return text || "OpenAI returned an empty response.";
+}
+
+async function callGemini(apiKey, task) {
+  const response = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": apiKey,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [{ text: task }]
+      }]
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    const err = new Error(
+      data.error?.message || "Gemini request failed"
+    );
+    err.status = response.status;
+    throw err;
+  }
+
+  const text = (data.candidates || [])
+    .flatMap(candidate => candidate.content?.parts || [])
+    .map(part => part.text || "")
+    .join("");
+
+  return text || "Gemini returned no text. Check the prompt or model availability.";
+}
+
+const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin;
 
-  if (origin && FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) {
-    res.setHeader("Access-Control-Allow-Origin", FRONTEND_ORIGIN);
-    res.setHeader("Vary", "Origin");
-    res.setHeader(
-  "Access-Control-Allow-Headers",
-  "Content-Type, x-openai-api-key"
-);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  } else if (origin && origin !== FRONTEND_ORIGIN) {
-    return res.status(403).json({
-      error: "This website is not allowed to access the backend."
+  if (origin && origin !== FRONTEND_ORIGIN) {
+    return send(res, 403, {
+      ok: false,
+      error: "Origin not allowed."
     });
   }
 
   if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
+      "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+      "Access-Control-Allow-Headers":
+        "Content-Type, x-openai-api-key, x-gemini-api-key",
+      "Vary": "Origin"
+    });
+    return res.end();
   }
 
-  next();
-});
-
-app.get("/api/health", (req, res) => {
-  res.json({
-    ok: true,
-    service: "OGCG AI Router backend"
-  });
-});
-
-app.post("/api/chat", async (req, res) => {
-  const apiKey = req.get("x-openai-api-key");
-  const task = req.body && req.body.task;
-
-  if (!apiKey || !apiKey.trim()) {
-    return res.status(400).json({
-      error: "Enter your OpenAI API key in provider settings."
+  if (req.method === "GET" && req.url === "/") {
+    return send(res, 200, {
+      ok: true,
+      service: "OGCG AI Router backend",
+      providers: ["openai", "gemini"]
     });
   }
 
-  if (typeof task !== "string" || !task.trim()) {
-    return res.status(400).json({
-      error: "Enter a coding task before sending."
-    });
-  }
-
-  if (task.length > 12000) {
-    return res.status(413).json({
-      error: "The task is too long. Please shorten it."
+  if (req.method !== "POST" || req.url !== "/api/chat") {
+    return send(res, 404, {
+      ok: false,
+      error: "Endpoint not found."
     });
   }
 
   try {
-    const response = await fetch(
-      "https://api.openai.com/v1/responses",
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "gpt-4.1-mini",
-          input: task.trim()
-        }),
-        signal: AbortSignal.timeout(60000)
-      }
-    );
+    const body = await readBody(req);
+    const task = typeof body.task === "string"
+      ? body.task.trim()
+      : "";
+    const provider = String(body.provider || "openai").toLowerCase();
 
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      const status = response.status;
-
-      if (status === 401) {
-        return res.status(401).json({
-          error: "OpenAI rejected the API key. Check that it is valid."
-        });
-      }
-
-      if (status === 429) {
-        return res.status(429).json({
-          error: "OpenAI rate limit or usage limit reached. Check your API account."
-        });
-      }
-
-      return res.status(502).json({
-        error: "OpenAI request failed.",
-        providerStatus: status,
-        details: data.error?.message || "The provider returned an error."
+    if (!task) {
+      return send(res, 400, {
+        ok: false,
+        error: "Enter a task or prompt first."
       });
     }
 
-    const text = (data.output || [])
-      .flatMap((item) => item.content || [])
-      .filter((item) => item.type === "output_text")
-      .map((item) => item.text)
-      .join("\n");
+    let text;
 
-    if (!text) {
-      return res.status(502).json({
-        error: "OpenAI returned no text for this request."
+    if (provider === "openai") {
+      const key = req.headers["x-openai-api-key"];
+      if (!key) {
+        return send(res, 400, {
+          ok: false,
+          error: "Enter your OpenAI API key in Settings."
+        });
+      }
+      text = await callOpenAI(key, task);
+    } else if (provider === "gemini") {
+      const key = req.headers["x-gemini-api-key"];
+      if (!key) {
+        return send(res, 400, {
+          ok: false,
+          error: "Enter your Gemini API key in Settings."
+        });
+      }
+      text = await callGemini(key, task);
+    } else {
+      return send(res, 400, {
+        ok: false,
+        error: "Provider not integrated yet. Choose OpenAI or Gemini."
       });
     }
 
-    return res.json({
+    return send(res, 200, {
       ok: true,
-      provider: "openai",
+      provider,
       text
     });
   } catch (error) {
-    // Do not log headers, API keys, or request bodies.
-    if (error.name === "TimeoutError" ||
-        error.name === "AbortError") {
-      return res.status(504).json({
-        error: "The OpenAI request timed out. Please try again."
-      });
+    const status = error.status || 500;
+    let message = error.message || "Unexpected backend error.";
+
+    if (status === 429) {
+      message =
+        "Rate limit or API quota reached. Check this provider's usage and billing.";
+    } else if (status === 401 || status === 403) {
+      message =
+        "Authentication or permission failed. Check the API key and provider access.";
     }
 
-    return res.status(502).json({
-      error: "Could not reach OpenAI. Check the backend connection and try again."
+    return send(res, status >= 400 && status < 600 ? status : 500, {
+      ok: false,
+      error: message
     });
   }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`OGCG AI backend listening on port ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`OGCG AI Router backend listening on port ${PORT}`);
 });
-      
