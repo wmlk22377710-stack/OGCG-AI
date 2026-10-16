@@ -18,7 +18,10 @@ app.use((req, res, next) => {
   if (origin && FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) {
     res.setHeader("Access-Control-Allow-Origin", FRONTEND_ORIGIN);
     res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader(
+  "Access-Control-Allow-Headers",
+  "Content-Type, x-openai-api-key"
+);
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   } else if (origin && origin !== FRONTEND_ORIGIN) {
     return res.status(403).json({
