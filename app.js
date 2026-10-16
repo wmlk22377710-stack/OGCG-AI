@@ -2,20 +2,33 @@
 "use strict";
 
 // OGCG AI — Multi AI Router
-// OpenAI requests are sent through the Render backend.
-// API keys are kept in memory only and cleared on page refresh.
+// Provider keys stay in page memory and are cleared on refresh.
 
 const BACKEND_URL = "https://ogcg-ai-1.onrender.com";
 
 const PROVIDERS = {
-  openai: { name: "OpenAI", description: "GPT models" },
-  gemini: { name: "Gemini", description: "Google AI models" },
-  claude: { name: "Claude", description: "Anthropic models" },
-  grok: { name: "Grok", description: "xAI models" }
+  openai: {
+    name: "OpenAI",
+    description: "GPT models",
+    header: "x-openai-api-key"
+  },
+  gemini: {
+    name: "Gemini",
+    description: "Google AI models",
+    header: "x-gemini-api-key"
+  },
+  claude: {
+    name: "Claude",
+    description: "Anthropic models"
+  },
+  grok: {
+    name: "Grok",
+    description: "xAI models"
+  }
 };
 
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+const $ = selector => document.querySelector(selector);
+const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 const providerInputs = $$('input[name="provider"]');
 const selectionCount = $("#selectionCount");
@@ -36,28 +49,38 @@ const providerChoice = $("#providerChoice");
 const providerHelp = $("#providerHelp");
 const apiKeyInput = $("#apiKeyInput");
 const connectProviderButton = $("#connectProvider");
-const connectionInfo = $("#connectionInfo");
 const settingsMessage = $("#settingsMessage");
 
-// Intentionally not saved to localStorage, sessionStorage, or cookies.
-let openAIKey = "";
-let openAIConnected = false;
+// Keys are deliberately not persisted in browser storage.
+const providerKeys = {
+  openai: "",
+  gemini: ""
+};
+
+const providerConnected = {
+  openai: false,
+  gemini: false
+};
+
 let isRunning = false;
 let isConnecting = false;
 
 function getSelectedProviders() {
   return providerInputs
-    .filter((input) => input.checked)
-    .map((input) => input.value);
+    .filter(input => input.checked)
+    .map(input => input.value.toLowerCase());
 }
 
 function updateSelectionUI() {
   const selected = getSelectedProviders();
+
   selectionCount.textContent =
     `${selected.length} provider${selected.length === 1 ? "" : "s"} selected`;
 
   selectAllButton.textContent =
-    selected.length === providerInputs.length ? "Deselect all" : "Select all";
+    selected.length === providerInputs.length
+      ? "Deselect all"
+      : "Select all";
 }
 
 function showMessage(text, type = "") {
@@ -95,15 +118,23 @@ function openChat() {
 }
 
 function updateProviderHelp() {
-  const provider = PROVIDERS[providerChoice.value];
+  const providerId = providerChoice.value;
+  const provider = PROVIDERS[providerId];
+
   if (!provider) return;
 
-  if (providerChoice.value === "openai") {
+  if (providerId === "openai" || providerId === "gemini") {
     providerHelp.textContent =
-      "OpenAI uses your API key through the OGCG AI backend. API usage may incur charges.";
+      `${provider.name} uses your API key through the OGCG AI backend. ` +
+      "API usage may incur charges. Your key is kept in page memory.";
+    apiKeyInput.placeholder = `Enter your ${provider.name} API key`;
+    apiKeyInput.setAttribute("aria-label", `${provider.name} API key`);
+    connectProviderButton.textContent = "Connect & Verify";
   } else {
     providerHelp.textContent =
-      `${provider.name}: ${provider.description}. This provider integration is not available yet.`;
+      `${provider.name} (${provider.description}) is not integrated yet. ` +
+      "Currently supported: OpenAI and Gemini.";
+    apiKeyInput.placeholder = "Provider not available yet";
   }
 }
 
@@ -139,14 +170,56 @@ async function readResponse(response) {
   return response.json().catch(() => ({}));
 }
 
+function buildHeaders(providerId, apiKey) {
+  return {
+    "Content-Type": "application/json",
+    [PROVIDERS[providerId].header]: apiKey
+  };
+}
+
+async function requestProvider(providerId, task) {
+  const apiKey = providerKeys[providerId];
+
+  const response = await fetch(`${BACKEND_URL}/api/chat`, {
+    method: "POST",
+    headers: buildHeaders(providerId, apiKey),
+    body: JSON.stringify({
+      provider: providerId,
+      task
+    })
+  });
+
+  const data = await readResponse(response);
+
+  if (!response.ok || !data.ok) {
+    const error = new Error(
+      data.error || `${PROVIDERS[providerId].name} request failed (HTTP ${response.status}).`
+    );
+    error.status = response.status;
+    throw error;
+  }
+
+  if (typeof data.text !== "string" || !data.text.trim()) {
+    throw new Error(`${PROVIDERS[providerId].name} returned no text.`);
+  }
+
+  return data.text;
+}
+
 async function handleConnect() {
   if (isConnecting) return;
 
   const providerId = providerChoice.value;
+  const provider = PROVIDERS[providerId];
 
-  if (providerId !== "openai") {
+  if (!provider) {
+    showSettingsMessage("Choose a provider first.", "error");
+    return;
+  }
+
+  if (!provider.header) {
     showSettingsMessage(
-      `${PROVIDERS[providerId].name} is not integrated yet. OpenAI is the first supported provider.`,
+      `${provider.name} is not integrated yet. Choose OpenAI or Gemini.`,
       "error"
     );
     return;
@@ -155,7 +228,7 @@ async function handleConnect() {
   const enteredKey = apiKeyInput.value.trim();
 
   if (!enteredKey) {
-    showSettingsMessage("Enter your OpenAI API key first.", "error");
+    showSettingsMessage(`Enter your ${provider.name} API key first.`, "error");
     apiKeyInput.focus();
     return;
   }
@@ -163,58 +236,74 @@ async function handleConnect() {
   isConnecting = true;
   connectProviderButton.disabled = true;
   connectProviderButton.textContent = "Verifying...";
-  showSettingsMessage("Testing the key through your backend...");
+  showSettingsMessage(`Testing ${provider.name} through your backend...`);
 
   try {
-    const response = await fetch(`${BACKEND_URL}/api/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-openai-api-key": enteredKey
-      },
-      body: JSON.stringify({
-        task: "Reply with exactly the word OK."
-      })
-    });
+    const text = await requestWithKey(
+      providerId,
+      enteredKey,
+      "Reply with exactly the word OK."
+    );
 
-    const data = await readResponse(response);
-
-    if (!response.ok) {
-      throw new Error(data.error || `Connection failed (HTTP ${response.status}).`);
+    if (!text.trim()) {
+      throw new Error(`${provider.name} returned no text.`);
     }
 
-    if (!data.ok || typeof data.text !== "string" || !data.text.trim()) {
-      throw new Error("The backend responded, but no AI text was returned.");
-    }
-
-    // Keep the key only in page memory after a successful test.
-    openAIKey = enteredKey;
-    openAIConnected = true;
+    providerKeys[providerId] = enteredKey;
+    providerConnected[providerId] = true;
     apiKeyInput.value = "";
-    setProviderStatus("openai", "Connected");
-    showSettingsMessage("OpenAI connected successfully. You can now run coding tasks.", "success");
+
+    setProviderStatus(providerId, "Connected");
+    showSettingsMessage(
+      `${provider.name} connected successfully. You can now run tasks.`,
+      "success"
+    );
   } catch (error) {
-    openAIConnected = false;
-    openAIKey = "";
-    setProviderStatus("openai", "Not connected");
+    providerKeys[providerId] = "";
+    providerConnected[providerId] = false;
+    setProviderStatus(providerId, "Not connected");
 
-    const details = error instanceof TypeError
-      ? "Could not reach the backend. Check the Render URL, deployment, and CORS configuration."
-      : error.message;
-
-    showSettingsMessage(details, "error");
+    showSettingsMessage(error.message, "error");
   } finally {
     isConnecting = false;
     connectProviderButton.disabled = false;
-    connectProviderButton.textContent = "Connect & Verify";
+    updateProviderHelp();
   }
 }
 
+async function requestWithKey(providerId, apiKey, task) {
+  const response = await fetch(`${BACKEND_URL}/api/chat`, {
+    method: "POST",
+    headers: buildHeaders(providerId, apiKey),
+    body: JSON.stringify({
+      provider: providerId,
+      task
+    })
+  });
+
+  const data = await readResponse(response);
+
+  if (!response.ok || !data.ok) {
+    throw new Error(
+      data.error || `${PROVIDERS[providerId].name} connection failed (HTTP ${response.status}).`
+    );
+  }
+
+  if (typeof data.text !== "string" || !data.text.trim()) {
+    throw new Error(`${PROVIDERS[providerId].name} returned no text.`);
+  }
+
+  return data.text;
+}
+
 function handleSelectAll() {
-  const allSelected = getSelectedProviders().length === providerInputs.length;
-  providerInputs.forEach((input) => {
+  const allSelected =
+    getSelectedProviders().length === providerInputs.length;
+
+  providerInputs.forEach(input => {
     input.checked = !allSelected;
   });
+
   updateSelectionUI();
   showMessage("");
 }
@@ -227,79 +316,79 @@ async function handleRunTask() {
 
   if (!selectedProviders.length) {
     showMessage("Select at least one AI provider before running a task.", "error");
-    results.hidden = true;
+    showResults([]);
     return;
   }
 
   if (!task) {
     showMessage("Enter a coding task first.", "error");
     taskInput.focus();
-    results.hidden = true;
-    return;
-  }
-
-  if (!selectedProviders.includes("openai")) {
-    showMessage("Select OpenAI. It is the only provider integrated in this first version.", "error");
-    results.hidden = true;
-    return;
-  }
-
-  if (!openAIConnected || !openAIKey) {
-    showMessage("Open Provider Settings and connect OpenAI before running a task.", "error");
-    openSettings("openai");
+    showResults([]);
     return;
   }
 
   isRunning = true;
   runTaskButton.disabled = true;
   runTaskButton.textContent = "Working...";
-  showMessage("Sending your task to OpenAI...");
+  showMessage("Running your task with the selected providers...");
 
   const cards = [];
+  let successCount = 0;
 
   try {
-    const response = await fetch(`${BACKEND_URL}/api/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-openai-api-key": openAIKey
-      },
-      body: JSON.stringify({ task })
-    });
-
-    const data = await readResponse(response);
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        openAIConnected = false;
-        openAIKey = "";
-        setProviderStatus("openai", "Not connected");
-      }
-      throw new Error(data.error || `Request failed (HTTP ${response.status}).`);
-    }
-
-    if (!data.ok || typeof data.text !== "string" || !data.text.trim()) {
-      throw new Error("OpenAI returned no text.");
-    }
-
-    cards.push(makeResultCard("OpenAI", "Real AI response", data.text));
-
     for (const providerId of selectedProviders) {
-      if (providerId === "openai") continue;
-      cards.push(makeResultCard(
-        PROVIDERS[providerId].name,
-        "Not connected yet. This provider integration will be added separately."
-      ));
+      const provider = PROVIDERS[providerId];
+
+      if (!provider) continue;
+
+      if (!provider.header) {
+        cards.push(makeResultCard(
+          provider.name,
+          "Not integrated yet. Currently supported: OpenAI and Gemini."
+        ));
+        continue;
+      }
+
+      if (!providerConnected[providerId] || !providerKeys[providerId]) {
+        cards.push(makeResultCard(
+          provider.name,
+          "Not connected. Open Provider Settings and connect this provider."
+        ));
+        continue;
+      }
+
+      try {
+        showMessage(`Waiting for ${provider.name}...`);
+        const text = await requestProvider(providerId, task);
+
+        cards.push(makeResultCard(provider.name, "Real AI response", text));
+        successCount++;
+      } catch (error) {
+        if (error.status === 401 || error.status === 403) {
+          providerKeys[providerId] = "";
+          providerConnected[providerId] = false;
+          setProviderStatus(providerId, "Not connected");
+        }
+
+        cards.push(makeResultCard(provider.name, "Request failed", error.message));
+      }
     }
 
     showResults(cards);
-    showMessage("OpenAI completed your task.", "success");
-  } catch (error) {
-    showResults([
-      makeResultCard("OpenAI", "Request failed", error.message)
-    ]);
 
-    showMessage(error.message, "error");
+    if (successCount === selectedProviders.length) {
+      showMessage("All selected providers completed the task.", "success");
+    } else if (successCount > 0) {
+      showMessage(
+        `${successCount} provider${successCount === 1 ? "" : "s"} completed the task. Check the results for other providers.`,
+        "success"
+      );
+    } else {
+      showMessage(
+        "No selected provider returned a response. Check the result cards and provider settings.",
+        "error"
+      );
+    }
   } finally {
     isRunning = false;
     runTaskButton.disabled = false;
@@ -310,8 +399,7 @@ async function handleRunTask() {
 function handleNewChat() {
   taskInput.value = "";
   showMessage("");
-  results.hidden = true;
-  resultContent.replaceChildren();
+  showResults([]);
   openChat();
   taskInput.focus();
 }
@@ -322,7 +410,7 @@ function handleConnectClick(event) {
   openSettings(event.currentTarget.dataset.connect);
 }
 
-providerInputs.forEach((input) => {
+providerInputs.forEach(input => {
   input.addEventListener("change", () => {
     updateSelectionUI();
     showMessage("");
@@ -332,9 +420,13 @@ providerInputs.forEach((input) => {
 selectAllButton.addEventListener("click", handleSelectAll);
 runTaskButton.addEventListener("click", handleRunTask);
 connectProviderButton.addEventListener("click", handleConnect);
-providerChoice.addEventListener("change", updateProviderHelp);
+providerChoice.addEventListener("change", () => {
+  apiKeyInput.value = "";
+  updateProviderHelp();
+  showSettingsMessage("");
+});
 
-$$("[data-connect]").forEach((button) => {
+$$("[data-connect]").forEach(button => {
   button.addEventListener("click", handleConnectClick);
 });
 
